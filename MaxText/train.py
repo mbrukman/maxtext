@@ -71,6 +71,7 @@ def validate_train_config(config):
     max_logging.log("WARNING: 'base_output_directory' might be pointing your local file system")
   assert config.steps > 0, "You must set steps or learning_rate_schedule_steps to a positive interger."
 
+
 # https://arxiv.org/pdf/2204.02311.pdf Appendix B
 def calculate_training_tflops(num_model_parameters, config):
   """ Calculate training TFLOP"""
@@ -85,6 +86,7 @@ def calculate_training_tflops(num_model_parameters, config):
         f'and {100 * causal_attention_tflops/total_tflops:.2f}% attention flops')
   return total_tflops
 
+
 def get_first_step(state):
   with jax.spmd_mode('allow_all'):
     return int(state.step)
@@ -97,6 +99,7 @@ def load_next_batch(train_iter, example_batch, config):
     return example_batch
   else:
     return next(train_iter)
+
 
 def record_scalar_metrics(metrics, step_time_delta, per_device_tflops, lr):
   """Records scalar metrics to be written to tensorboard"""
@@ -112,6 +115,7 @@ def record_scalar_metrics(metrics, step_time_delta, per_device_tflops, lr):
           step_time_delta.total_seconds()
   })
   metrics['scalar'].update({'learning/current_learning_rate': lr })
+
 
 _buffered_step = None
 _buffered_metrics = None
@@ -140,6 +144,7 @@ def write_metrics(writer, local_metrics_file, running_gcs_metrics, metrics, step
   _buffered_step = step
   _buffered_metrics = metrics
 
+
 def write_metrics_to_tensorboard(writer, metrics, step, config):
   """ Writes metrics to tensorboard"""
   with jax.spmd_mode('allow_all'):
@@ -161,16 +166,21 @@ def write_metrics_to_tensorboard(writer, metrics, step, config):
       )
       writer.flush()
 
+
 def save_checkpoint(checkpoint_manager, step, state, dataset_type='c4', data_iterator=None):
   """Wrapper for saving checkpoint"""
   if dataset_type == 'c4-array_record':
     return checkpoint_manager.save(step, args=orbax.checkpoint.args.Composite(
-                                                    default=orbax.checkpoint.args.StandardSave(state),
+                                                    items=orbax.checkpoint.args.PyTreeSave(item=state),
                                                     iter=grain.PyGrainCheckpointSave(data_iterator.local_iterator)
                                                     ))
   else:
-    return checkpoint_manager.save(step, args=orbax.checkpoint.args.Composite(
-                                                    default=orbax.checkpoint.args.StandardSave(state)))
+    return checkpoint_manager.save(
+      step,
+      args=orbax.checkpoint.args.Composite(
+        items=orbax.checkpoint.args.PyTreeSave(item=state)
+        ))
+
 # -----------------------------------------------------------------------------
 # Top-level Functions
 # -----------------------------------------------------------------------------
@@ -192,6 +202,7 @@ def record_activation_metrics(output_metrics, intermediate_outputs, config):
       output_metrics['scalar'][f'activ_fraction_zero/layer_{layer_num:03d}'] = layer["activation_fraction_zero"][0]
       output_metrics['scalar'][f'activ_mean/layer_{layer_num:03d}'] = layer["activation_mean"][0]
       output_metrics['scalar'][f'activ_stdev/layer_{layer_num:03d}'] = layer["activation_stdev"][0]
+
 
 def loss_fn(model, config, data, dropout_rng, params, is_train=True):
   '''loss_fn for both train and eval.
@@ -272,6 +283,7 @@ def train_step(model, config, state, data, dropout_rng):
 
   return new_state, metrics
 
+
 def eval_step(model, config, state, data, dropout_rng):
   """eval_step no backprop and new state compared with train_step."""
   eval_loss_fn = functools.partial(loss_fn, model, config, data, dropout_rng, is_train=False)
@@ -284,6 +296,7 @@ def eval_step(model, config, state, data, dropout_rng):
               'evaluation/total_weights': total_weights}}
 
   return metrics
+
 
 def setup_mesh_and_model(config):
   """ Set up the mesh and the model for training
@@ -322,6 +335,7 @@ def setup_mesh_and_model(config):
   tx = optimizers.get_optimizer(config, learning_rate_schedule)
   return init_rng, writer, checkpoint_manager, mesh, model, learning_rate_schedule, tx
 
+
 def setup_train_loop(config):
   """ Set up prerequisites for the training loop -
       checkpoint_manager, PRNG keys, Mesh, Model and optimizer.
@@ -347,7 +361,7 @@ def setup_train_loop(config):
   state, state_mesh_annotations, data_iterator = max_utils.setup_training_state(model, data_iterator,
           tx, config, init_rng, mesh, checkpoint_manager)
 
-  return ( init_rng, writer, checkpoint_manager, state_mesh_annotations, model,
+  return (init_rng, writer, checkpoint_manager, state_mesh_annotations, model,
           mesh, learning_rate_schedule, data_iterator, eval_data_iterator, state)
 
 
@@ -359,7 +373,7 @@ def train_loop(config, state=None):
     ckpt_path:
   Returns:
   """
-  ( init_rng, writer, checkpoint_manager, state_mesh_annotations, model,
+  (init_rng, writer, checkpoint_manager, state_mesh_annotations, model,
   mesh, learning_rate_schedule, data_iterator, eval_data_iterator, state) = setup_train_loop(config)
   # pylint: disable=line-too-long
   functional_train, in_shard_train, out_shard_train, static_argnums_train, donate_argnums_train = maxtext_utils.get_functional_train_with_signature(
@@ -442,7 +456,6 @@ def train_loop(config, state=None):
     if checkpoint_manager is not None:
       if save_checkpoint(checkpoint_manager, step, state, config.dataset_type, data_iterator):
         max_logging.log(f"saved a checkpoint at step {step}")
-
       # Upon preemption, exit when and only when all ongoing saves are complete.
       if checkpoint_manager.reached_preemption(step):
         checkpoint_manager.wait_until_finished()
